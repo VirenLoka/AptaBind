@@ -21,6 +21,7 @@ import torch
 import numpy as np
 import argparse
 import os
+import pickle
 import logging
 
 logging.basicConfig(
@@ -161,7 +162,7 @@ def extract_embeddings(
         for batch_idx in range(n_batches):
             batch_seqs = sequences[batch_idx * batch_size : (batch_idx + 1) * batch_size]
 
-            tokens = tokenizer.batch_encode_plus(
+            tokens = tokenizer(
                 batch_seqs,
                 return_tensors="pt",
                 padding="max_length",
@@ -170,7 +171,7 @@ def extract_embeddings(
             )
 
             input_ids = tokens["input_ids"].to(device)
-            attention_mask = (input_ids != tokenizer.pad_token_id).to(device)
+            attention_mask = tokens["attention_mask"].to(device)
 
             outputs = model(
                 input_ids,
@@ -216,7 +217,7 @@ def extract_all_layers(
         for batch_idx in range(0, len(sequences), batch_size):
             batch_seqs = sequences[batch_idx : batch_idx + batch_size]
 
-            tokens = tokenizer.batch_encode_plus(
+            tokens = tokenizer(
                 batch_seqs,
                 return_tensors="pt",
                 padding="max_length",
@@ -225,7 +226,7 @@ def extract_all_layers(
             )
 
             input_ids = tokens["input_ids"].to(device)
-            attention_mask = (input_ids != tokenizer.pad_token_id).to(device)
+            attention_mask = tokens["attention_mask"].to(device)
 
             outputs = model(
                 input_ids,
@@ -247,41 +248,38 @@ def extract_all_layers(
     return np.vstack(all_layers)
 
 
-def save_outputs(
+def save_pickle(
     embeddings: dict,
     sequence_ids: list[str],
+    sequences: list[str],
     labels: list[str],
     scores: list[str],
-    output_dir: str,
-    model_key: str,
+    output_path: str,
 ) -> None:
-    os.makedirs(output_dir, exist_ok=True)
+    """
+    Save a nested dict keyed by seq_id:
+        { seq_id: { sequence, embedding, label, enrichment_score } }
+    """
+    mean_pool = embeddings["mean_pool"]  # (N, hidden_size)
 
-    mean_path  = os.path.join(output_dir, f"embeddings_mean_{model_key}.npy")
-    cls_path   = os.path.join(output_dir, f"embeddings_cls_{model_key}.npy")
-    seq_path   = os.path.join(output_dir, f"sequences_{model_key}.txt")
-    id_path    = os.path.join(output_dir, f"sequence_ids_{model_key}.txt")
-    lab_path   = os.path.join(output_dir, f"labels_{model_key}.txt")
-    score_path = os.path.join(output_dir, f"enrichment_scores_{model_key}.txt")
+    result = {
+        seq_id: {
+            "sequence":         sequences[i],
+            "embedding":        mean_pool[i],
+            "label":            labels[i],
+            "enrichment_score": scores[i],
+        }
+        for i, seq_id in enumerate(sequence_ids)
+    }
 
-    np.save(mean_path, embeddings["mean_pool"])
-    np.save(cls_path,  embeddings["cls"])
+    parent = os.path.dirname(os.path.abspath(output_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
-    with open(seq_path, "w") as f:
-        f.write("\n".join(embeddings["sequences"]))
-    with open(id_path, "w") as f:
-        f.write("\n".join(sequence_ids))
-    with open(lab_path, "w") as f:
-        f.write("\n".join(labels))
-    with open(score_path, "w") as f:
-        f.write("\n".join(scores))
+    with open(output_path, "wb") as f:
+        pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    log.info(f"Saved mean-pool embeddings : {mean_path}  shape={embeddings['mean_pool'].shape}")
-    log.info(f"Saved CLS embeddings       : {cls_path}   shape={embeddings['cls'].shape}")
-    log.info(f"Saved sequences            : {seq_path}")
-    log.info(f"Saved sequence IDs         : {id_path}")
-    log.info(f"Saved labels               : {lab_path}")
-    log.info(f"Saved enrichment scores    : {score_path}")
+    log.info(f"Saved pickle: {output_path}  ({len(result):,} sequences, embedding shape: {mean_pool[0].shape})")
 
 
 def parse_args():
@@ -290,8 +288,8 @@ def parse_args():
     )
     p.add_argument("--input",   "-i", required=True,
                    help="TSV file with header: sequence_id, sequence, label, enrichment_score")
-    p.add_argument("--output",  "-o", default="nt_embeddings",
-                   help="Output directory (default: nt_embeddings/)")
+    p.add_argument("--output",  "-o", default="nt_embeddings.pkl",
+                   help="Output pickle file (default: nt_embeddings.pkl)")
     p.add_argument("--model",   "-m", default="500m-1000g",
                    choices=list(MODEL_OPTIONS.keys()),
                    help="Which NT model to use (default: 500m-1000g)")
@@ -338,14 +336,11 @@ def main():
             batch_size=max(1, args.batch_size // 4),
             max_length=args.max_length,
         )
-        all_layer_path = os.path.join(
-            args.output, f"embeddings_all_layers_{args.model}.npy"
-        )
-        os.makedirs(args.output, exist_ok=True)
+        all_layer_path = os.path.splitext(args.output)[0] + f"_all_layers_{args.model}.npy"
         np.save(all_layer_path, all_layer_embs)
         log.info(f"Saved all-layer embeddings: {all_layer_path}  shape={all_layer_embs.shape}")
 
-    save_outputs(embeddings, sequence_ids, labels, scores, args.output, args.model)
+    save_pickle(embeddings, sequence_ids, sequences, labels, scores, args.output)
     log.info("\nDone.")
 
 
