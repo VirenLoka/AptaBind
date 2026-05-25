@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AptaBind — configuration
+# All hyperparameters for dataset, model, training and inference live here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+data:
+  pickle_path:    "data/nt_embeddings/mean_pooled.pkl"   # output of gen_embeddings.py
+  positive_label: "1"                   # label string that maps to class 1
+  train_ratio:    0.80
+  val_ratio:      0.10
+  test_ratio:     0.10
+  stratify:       true                  # stratified split preserves class ratio
+  seed:           42
+
+# ── DataLoader ────────────────────────────────────────────────────────────────
+dataloader:
+  batch_size:    64
+  num_workers:   4      # set to 0 on Windows or if you see multiprocessing errors
+  pin_memory:    true
+  shuffle_train: true
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+# ViT-style patch transformer operating on flat NT embeddings.
+#
+#   embed_dim must be divisible by num_patches
+#   d_model   must be divisible by nhead
+#
+#   embed_dim=1280, num_patches=16  →  patch_size = 80
+#   d_model=256,    nhead=8         →  head_dim   = 32
+model:
+  embed_dim:       1280   # hidden size from gen_embeddings.py (NT 500m = 1280)
+  num_patches:     16     # splits the 1280-dim vector into 16 × 80-dim patches
+  d_model:         256    # transformer hidden dim (patch projection target)
+  nhead:           8      # number of self-attention heads
+  num_layers:      4      # number of TransformerEncoderLayer blocks
+  dim_feedforward: 512    # FFN inner dimension
+  dropout:         0.1
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  epochs:           100
+  learning_rate:    1.0e-4
+  weight_decay:     1.0e-5
+  optimizer:        "adamw"    # adamw | adam | sgd
+  scheduler:        "cosine"   # cosine (with warmup) | step | none
+  warmup_epochs:    5
+  step_size:        20         # used only when scheduler=step
+  gamma:            0.5        # used only when scheduler=step
+  grad_clip:        1.0        # max gradient norm (0 = disabled)
+
+  # Loss function
+  # Focal loss handles the 24:1 class imbalance by down-weighting easy negatives
+  # rather than up-weighting positives, which avoids aggressive class reweighting.
+  #   focal_alpha : balances positive vs. negative contribution  (0.25 = Lin et al. 2017)
+  #   focal_gamma : focusing strength  (2.0 = standard; higher = more focus on hard examples)
+  # Set loss: "bce" to fall back to plain BCEWithLogitsLoss (no weighting).
+  loss:             "focal"
+  focal_alpha:      0.25
+  focal_gamma:      2.0
+
+  checkpoint_dir:   "checkpoints"
+  best_metric:      "auc"      # metric used to select the best checkpoint
+                               # options: auc | auprc | val_loss | accuracy | f1
+
+  log_every_n_batches: 100
+  early_stopping_patience: 15
+
+# ── Inference ────────────────────────────────────────────────────────────────
+inference:
+  checkpoint_path: "checkpoints/best_model.pt"
+  input_pickle:    "nt_embeddings.pkl"  # can be a new unseen pickle file
+  output_csv:      "predictions.csv"
+  threshold:       0.5                  # sigmoid probability threshold for class 1
