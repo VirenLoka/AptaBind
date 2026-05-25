@@ -476,7 +476,7 @@ def train(config_path: str) -> None:
 
     # ── Test evaluation ───────────────────────────────────────────────────────
     log.info("Loading best checkpoint for held-out test evaluation…")
-    ckpt = torch.load(best_path, map_location=device)
+    ckpt = torch.load(best_path, map_location=device,weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
     test_metrics = evaluate(model, test_loader, criterion, device)
     _print_test_panel(test_metrics, best_epoch, total_time)
