@@ -1,0 +1,11 @@
+stage	sequences_remaining
+floor_value	6.267637e-08
+00_floor_total	119543
+01_after_dedup	119543
+02_ambiguous_bases	98292
+03_length	98292
+04_low_complexity	98292
+05_dkk1_motifs	96566
+06_gc_extremes	96566
+07_known_binder_similarity	96566
+08_final_clean_negatives	96566
