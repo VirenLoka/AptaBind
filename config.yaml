@@ -72,3 +72,78 @@ inference:
   input_pickle:    "nt_embeddings.pkl"  # can be a new unseen pickle file
   output_csv:      "predictions.csv"
   threshold:       0.5                  # sigmoid probability threshold for class 1
+
+# ── Enrich (RL aptamer optimizer) ────────────────────────────────────────────
+# Drives a PPO loop that mutates a parent DNA aptamer to maximise:
+#     reward = α · binder_confidence + β · plausibility
+# where binder_confidence is sigmoid(AptamerClassifier(NT_mean_pool(seq))).
+enrich:
+  # ── Run setup ─────────────────────────────────────────────────────────────
+  run_dir:           "runs"                       # base dir; timestamped subdir is created automatically
+  classifier_ckpt:   "checkpoints/best_model.pt"  # AptamerClassifier checkpoint (from train.py)
+  parent_sequence:   null                          # null → random parent; else explicit DNA string
+  parent_length:     35                            # used when parent_sequence is null
+  mutable_positions: null                          # null → all positions mutable; else list of ints
+  seed:              42
+
+  # ── NT embedder (frozen, used for reward computation) ─────────────────────
+  nt:
+    model_id:        "InstaDeepAI/nucleotide-transformer-500m-1000g"
+    layer:           -1
+    max_length:      128
+    embed_batch:     32       # batch size for NT forward (memory-sensitive)
+
+  # ── Reward function ───────────────────────────────────────────────────────
+  reward:
+    confidence_weight:   0.7    # weight on classifier binder probability
+    plausibility_weight: 0.3    # weight on DNA plausibility score
+    use_delta:           true   # report reward as delta over parent (gives clear gradient)
+    delta_scale:         5.0    # amplification for delta rewards
+
+    # Plausibility component thresholds
+    plaus:
+      min_length:       30
+      max_length:       40
+      gc_low:           0.20
+      gc_high:          0.80
+      max_run:          5       # homopolymer run length cap
+      max_composition:  0.50    # max single-base fraction
+      entropy_min:      1.4     # Shannon entropy floor (max for DNA = log2(4) = 2.0)
+
+  # ── MutationProposer architecture ─────────────────────────────────────────
+  proposer:
+    d_model:           256
+    n_heads:           8
+    n_enc_layers:      4
+    d_ff:              512
+    max_mutations:     5        # max bases mutated per rollout
+    min_mutations:     1        # min bases mutated before stop is allowed
+    neighborhood_k:    8        # cross-attention window in NucleotideSelector
+    dropout:           0.1
+
+  # ── Value network (critic) ────────────────────────────────────────────────
+  critic:
+    d_hidden:          512
+
+  # ── PPO hyperparameters ───────────────────────────────────────────────────
+  ppo:
+    n_iterations:        200
+    n_rollout_steps:     4
+    rollout_batch_size:  16
+    ppo_epochs:          4
+    minibatch_size:      16
+    lr_policy:           3.0e-4
+    lr_critic:           1.0e-3
+    clip_eps:            0.2
+    entropy_coef:        0.05
+    value_coef:          0.5
+    max_grad_norm:       1.0
+    pos_temp:            1.5
+    nt_temp:             1.5
+    entropy_decay:       0.9995
+    entropy_min:         0.005
+
+  # ── Logging + checkpointing ───────────────────────────────────────────────
+  save_every:          25       # save last_checkpoint.pt every N iterations
+  log_every:           1        # print step panel every N iterations
+  top_k_sequences:     20       # number of best sequences to dump to CSV
