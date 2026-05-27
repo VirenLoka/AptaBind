@@ -316,7 +316,7 @@ class AptamerScorer(nn.Module):
                 f"Run train.py first to produce one."
             )
 
-        ckpt = torch.load(ckpt_path, map_location=device)
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only = False)
         ckpt_cfg = ckpt.get("config")
         if ckpt_cfg is None or "model" not in ckpt_cfg:
             raise ValueError(
